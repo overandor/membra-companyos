@@ -8,6 +8,7 @@ import structlog
 from app.core.config import settings
 from app.db.database import init_db
 from app.api.routes import router
+from app.api.llm import router as llm_router
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Routes
 app.include_router(router)
+app.include_router(llm_router)
 
 
 @app.get("/")
