@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --membra-bg: #0b0f1a;
+  --membra-gold: #c9a84c;
+  --membra-gold-light: #e4c76b;
+  --membra-surface: #111827;
+  --membra-border: #1f2937;
+  --membra-text: #f3f4f6;
+  --membra-muted: #9ca3af;
+}
+
+body {
+  background-color: var(--membra-bg);
+  color: var(--membra-text);
+}
+
+.card {
+  background: linear-gradient(145deg, #111827, #0f172a);
+  border: 1px solid var(--membra-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.gold-text {
+  color: var(--membra-gold);
+}
+
+.gold-border {
+  border-color: var(--membra-gold);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--membra-gold), var(--membra-gold-light));
+  color: #0b0f1a;
+  font-weight: 600;
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  transition: opacity 0.2s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
