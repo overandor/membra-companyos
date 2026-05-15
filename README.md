@@ -75,6 +75,35 @@ uvicorn app.main:app --reload
 | `POST /api/v1/assets` | Register WorldBridge asset |
 | `GET /api/v1/proofbook` | Query immutable ProofBook |
 
+## LLM Bridge — 6 Novel Frontend ↔ Backend Patterns
+
+| Endpoint | Pattern | Description |
+|----------|---------|-------------|
+| `POST /api/v1/llm/intent-ui` | **IntentDrivenUI** | Natural language mutates React state via backend LLM |
+| `POST /api/v1/llm/schema-component` | **SchemaToComponent** | SQLAlchemy schema auto-generates React TSX components |
+| `POST /api/v1/llm/predict` | **PredictiveOrchestration** | LLM predicts next needs; backend pre-computes data |
+| `POST /api/v1/llm/governance-chat` | **ChatGovernance** | Approve/reject/escalate via conversational LLM |
+| `POST /api/v1/llm/verify-proof` | **MultimodalProof** | Vision LLM verifies uploaded images as task proof |
+| `POST /api/v1/llm/swarm` | **AgentSwarmProxy** | Single LLM proxy routes to multiple specialist agents |
+
+### Pattern 1 — IntentDrivenUI
+The backend LLM parses natural language and returns a JSON patch that the frontend applies directly to React state: component visibility, form pre-fill, route hints, and data-fetch triggers.
+
+### Pattern 2 — SchemaToComponent
+Send a SQLAlchemy table name + field definitions. The backend returns a complete TypeScript React component string with props interface, form fields, and display markup.
+
+### Pattern 3 — PredictiveOrchestration
+Send recent user action history. The backend predicts the most likely next 3 actions, pre-fetches relevant data endpoints, and returns UI preload instructions.
+
+### Pattern 4 — ChatGovernance
+Send a chat message like "approve the last request" or "show pending approvals." The LLM interprets intent, mutates `ApprovalRequest` records, and returns a human-friendly reply.
+
+### Pattern 5 — MultimodalProof
+Upload base64-encoded media. A vision-capable LLM analyzes the content, checks against task proof requirements, writes a `TaskProof` record if verified, and appends to ProofBook.
+
+### Pattern 6 — AgentSwarmProxy
+Send any user message. The LLM proxy analyzes intent, selects relevant specialist agents (strategy, finance, compliance, operations, marketing), dispatches them in parallel, and synthesizes a unified response.
+
 ## Production Boundaries
 
 - No fake payments
