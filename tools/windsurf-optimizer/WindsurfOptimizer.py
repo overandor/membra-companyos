@@ -190,6 +190,75 @@ class OllamaClient:
             on_chunk(f"\n[Error: {e}]")
 
 
+class Verifier:
+    """Self-diagnostics — verify app integrity and system readiness."""
+    def __init__(self, log_cb=None):
+        self.log = log_cb or (lambda m: None)
+        self.results = []
+
+    def run_all(self):
+        self.results = []
+        self._check("Python 3.11", sys.version_info[:2] == (3, 11))
+        self._check("psutil", self._test_psutil())
+        self._check("requests", self._test_requests())
+        self._check("AppKit", self._test_appkit())
+        self._check("Apple Silicon", SystemInfo.is_as())
+        self._check("sudo access", self._test_sudo())
+        self._check("Ollama reachable", OllamaClient().is_running())
+        self._check("Windsurf running", self._test_windsurf())
+        self._check("purge available", self._test_purge())
+        self._check("taskpolicy", self._test_taskpolicy())
+        return self.results
+
+    def _check(self, name, ok):
+        icon = "✓" if ok else "✗"
+        self.results.append((name, ok, icon))
+        self.log(f"{icon} {name}: {'OK' if ok else 'FAIL'}")
+
+    def _test_psutil(self):
+        try:
+            psutil.virtual_memory()
+            return True
+        except Exception:
+            return False
+
+    def _test_requests(self):
+        try:
+            requests.get("http://localhost:11434/api/tags", timeout=1)
+            return True
+        except Exception:
+            return False
+
+    def _test_appkit(self):
+        try:
+            from AppKit import NSColor
+            _ = NSColor.clearColor()
+            return True
+        except Exception:
+            return False
+
+    def _test_sudo(self):
+        ok, _ = _run("echo ok", sudo=True)
+        return ok
+
+    def _test_windsurf(self):
+        for p in psutil.process_iter(["name"]):
+            try:
+                if any(t in (p.info["name"] or "") for t in WINDSURF_NAMES):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _test_purge(self):
+        ok, _ = _run("which purge")
+        return ok
+
+    def _test_taskpolicy(self):
+        ok, _ = _run("which taskpolicy")
+        return ok
+
+
 class NeomorphicPanel:
     def __init__(self, app):
         self.app = app
@@ -199,7 +268,7 @@ class NeomorphicPanel:
         self._build()
 
     def _build(self):
-        frame = NSMakeRect(100, 100, 560, 780)
+        frame = NSMakeRect(100, 100, 420, 600)
         mask = (NSTitledWindowMask | NSClosableWindowMask |
                 NSResizableWindowMask | NSFullSizeContentViewWindowMask)
         self.win = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -220,7 +289,10 @@ class NeomorphicPanel:
         self.effect.setMaterial_(NSVisualEffectMaterialDark)
         self.effect.setState_(NSVisualEffectStateActive)
         self.effect.setWantsLayer_(True)
-        self.effect.layer().setCornerRadius_(16)
+        self.effect.layer().setCornerRadius_(20)
+        self.effect.layer().setBorderWidth_(0.5)
+        self.effect.layer().setBorderColor_(
+            NSColor.colorWithWhite_alpha_(1.0, 0.08).CGColor())
         self.effect.layer().setMasksToBounds_(True)
         self.win.contentView().addSubview_(self.effect)
 
@@ -245,37 +317,44 @@ class NeomorphicPanel:
         return tf
 
     def _add_stats(self):
-        labels = [("RAM", 20), ("CPU", 200), ("GPU", 380)]
+        labels = [("RAM", 10), ("CPU", 145), ("GPU", 280)]
         self.stat_fields = {}
         for name, x in labels:
-            self.effect.addSubview_(self._mk_label(name, NSMakeRect(x, 710, 160, 20), 10, DIM_COLOR))
-            tf = self._mk_label("—", NSMakeRect(x, 670, 160, 36), 22, TEXT_COLOR, True)
+            self.effect.addSubview_(self._mk_label(name, NSMakeRect(x, 540, 120, 16), 9, DIM_COLOR))
+            tf = self._mk_label("—", NSMakeRect(x, 500, 120, 32), 20, TEXT_COLOR, True)
             self.effect.addSubview_(tf)
             self.stat_fields[name] = tf
         chip = SystemInfo.chip()
         if chip:
-            self.effect.addSubview_(self._mk_label(chip, NSMakeRect(20, 650, 520, 16), 9, DIM_COLOR))
+            self.effect.addSubview_(self._mk_label(chip, NSMakeRect(10, 482, 400, 14), 8, DIM_COLOR))
 
     def _add_buttons(self):
-        actions = [("RAM", 20), ("CPU", 148), ("GPU", 276), ("WS", 404)]
+        actions = [("RAM", 10), ("CPU", 112), ("GPU", 214), ("WS", 316)]
         for label, x in actions:
-            btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, 590, 115, 36))
+            btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, 440, 90, 28))
             btn.setTitle_(label)
             btn.setBezelStyle_(NSBezelStyleRounded)
-            btn.setFont_(NSFont.systemFontOfSize_weight_(11, 0.4))
+            btn.setFont_(NSFont.systemFontOfSize_weight_(10, 0.4))
             btn.setTarget_(self)
             btn.setAction_(f"opt_{label.lower()}:")
             self.effect.addSubview_(btn)
-        full = NSButton.alloc().initWithFrame_(NSMakeRect(20, 540, 500, 42))
-        full.setTitle_("FULL SYSTEM OPTIMIZE")
+        full = NSButton.alloc().initWithFrame_(NSMakeRect(10, 400, 400, 32))
+        full.setTitle_("FULL OPTIMIZE")
         full.setBezelStyle_(NSBezelStyleRounded)
-        full.setFont_(NSFont.systemFontOfSize_weight_(12, 0.5))
+        full.setFont_(NSFont.systemFontOfSize_weight_(11, 0.5))
         full.setTarget_(self)
         full.setAction_("opt_full:")
         self.effect.addSubview_(full)
+        verify = NSButton.alloc().initWithFrame_(NSMakeRect(10, 360, 400, 32))
+        verify.setTitle_("Verify System")
+        verify.setBezelStyle_(NSBezelStyleRounded)
+        verify.setFont_(NSFont.systemFontOfSize_weight_(11, 0.4))
+        verify.setTarget_(self)
+        verify.setAction_("run_verify:")
+        self.effect.addSubview_(verify)
 
     def _add_log(self):
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 310, 520, 220))
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(10, 210, 400, 140))
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(0)
         self.log_view = NSTextView.alloc().initWithFrame_(scroll.contentView().bounds())
@@ -288,16 +367,16 @@ class NeomorphicPanel:
         self.effect.addSubview_(scroll)
 
     def _add_ollama(self):
-        self.effect.addSubview_(self._mk_label("Ollama LLM", NSMakeRect(20, 280, 520, 16), 10, DIM_COLOR))
-        self.model_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, 245, 200, 26))
+        self.effect.addSubview_(self._mk_label("Ollama", NSMakeRect(10, 190, 400, 14), 9, DIM_COLOR))
+        self.model_btn = NSButton.alloc().initWithFrame_(NSMakeRect(10, 162, 180, 22))
         self.model_btn.setTitle_("Loading models…")
         self.model_btn.setBezelStyle_(NSBezelStyleRounded)
-        self.model_btn.setFont_(NSFont.systemFontOfSize_(10))
+        self.model_btn.setFont_(NSFont.systemFontOfSize_(9))
         self.model_btn.setTarget_(self)
         self.model_btn.setAction_("cycle_model:")
         self.effect.addSubview_(self.model_btn)
 
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 80, 520, 155))
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(10, 55, 400, 100))
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(0)
         self.chat_view = NSTextView.alloc().initWithFrame_(scroll.contentView().bounds())
@@ -309,8 +388,8 @@ class NeomorphicPanel:
         scroll.setDocumentView_(self.chat_view)
         self.effect.addSubview_(scroll)
 
-        self.entry = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 40, 420, 28))
-        self.entry.setFont_(NSFont.systemFontOfSize_(11))
+        self.entry = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 22, 310, 24))
+        self.entry.setFont_(NSFont.systemFontOfSize_(10))
         self.entry.setTextColor_(TEXT_COLOR)
         self.entry.setBackgroundColor_(CARD_COLOR)
         self.entry.setBezeled_(True)
@@ -319,10 +398,10 @@ class NeomorphicPanel:
         self.entry.setAction_("send_chat:")
         self.effect.addSubview_(self.entry)
 
-        send = NSButton.alloc().initWithFrame_(NSMakeRect(450, 38, 90, 30))
+        send = NSButton.alloc().initWithFrame_(NSMakeRect(328, 20, 80, 26))
         send.setTitle_("Send")
         send.setBezelStyle_(NSBezelStyleRounded)
-        send.setFont_(NSFont.systemFontOfSize_weight_(11, 0.4))
+        send.setFont_(NSFont.systemFontOfSize_weight_(10, 0.4))
         send.setTarget_(self)
         send.setAction_("send_chat:")
         self.effect.addSubview_(send)
@@ -366,6 +445,16 @@ class NeomorphicPanel:
                 self._log(f"Done: {mode}")
             except Exception as e:
                 self._log(f"Error: {e}")
+        threading.Thread(target=task, daemon=True).start()
+
+    def run_verify(self, _):
+        def task():
+            self._log("Running diagnostics…")
+            v = Verifier(log_cb=self._log)
+            results = v.run_all()
+            passed = sum(1 for _, ok, _ in results if ok)
+            total = len(results)
+            self._log(f"Results: {passed}/{total} passed")
         threading.Thread(target=task, daemon=True).start()
 
     def opt_ram(self, _): self._run_opt("ram")

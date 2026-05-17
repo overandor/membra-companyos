@@ -13,6 +13,9 @@ from app.api.workforce import router as workforce_router
 from app.api.opportunities import router as opportunities_router
 from app.api.datasources import router as datasources_router
 from app.api.treasury import router as treasury_router
+from app.api.metrics import router as metrics_router
+from app.services.event_bus import get_event_bus
+from app.services.agent_runtime import get_agent_runtime
 
 logger = structlog.get_logger()
 
@@ -24,7 +27,14 @@ async def lifespan(app: FastAPI):
     if settings.environment in ("development", "staging"):
         await init_db()
         logger.info("db_initialized")
+    bus = await get_event_bus()
+    await bus.start_listener()
+    logger.info("event_bus_listening")
+    runtime = await get_agent_runtime()
+    logger.info("agent_runtime_started")
     yield
+    await runtime.stop()
+    await bus.disconnect()
     logger.info("membra_shutdown")
 
 
@@ -54,6 +64,7 @@ app.include_router(workforce_router)
 app.include_router(opportunities_router)
 app.include_router(datasources_router)
 app.include_router(treasury_router)
+app.include_router(metrics_router)
 
 
 @app.get("/")
