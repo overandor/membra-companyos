@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.services.treasury import TreasuryService
 from app.services.proofbook_service import ProofBookService
+from app.services.approval_workflow import get_approval_workflow
 
 router = APIRouter(prefix="/api/v1")
 
@@ -86,4 +87,64 @@ async def get_proofbook_opportunities(
             }
             for e in events
         ],
+    }
+
+
+@router.get("/treasury/approvals", tags=["treasury"])
+async def list_treasury_approvals(status: Optional[str] = None):
+    """List treasury approval requests."""
+    wf = get_approval_workflow()
+    reqs = wf.list_requests(status=status)
+    return {
+        "count": len(reqs),
+        "requests": [
+            {
+                "request_id": r.request_id,
+                "opportunity_id": r.opportunity_id,
+                "current_stage": r.current_stage.value,
+                "employee_id": r.employee_id,
+                "signatures": r.signatures,
+                "created_at": r.created_at,
+            }
+            for r in reqs
+        ],
+    }
+
+
+@router.get("/treasury/approvals/{request_id}", tags=["treasury"])
+async def get_treasury_approval(request_id: str):
+    """Get a specific approval request."""
+    wf = get_approval_workflow()
+    req = wf.get_request(request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    return {
+        "request_id": req.request_id,
+        "opportunity_id": req.opportunity_id,
+        "current_stage": req.current_stage.value,
+        "stages": [s.value for s in req.stages],
+        "signatures": req.signatures,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+        "metadata": req.metadata,
+    }
+
+
+@router.post("/treasury/approvals/{request_id}/advance", tags=["treasury"])
+async def advance_treasury_approval(
+    request_id: str,
+    signer_id: str,
+    decision: str,
+    notes: str = "",
+):
+    """Advance a treasury approval request."""
+    wf = get_approval_workflow()
+    req = wf.get_request(request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    req = await wf.advance(request_id, signer_id, decision, notes)
+    return {
+        "request_id": req.request_id,
+        "current_stage": req.current_stage.value,
+        "signatures": req.signatures,
     }

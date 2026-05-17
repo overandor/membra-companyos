@@ -10,6 +10,7 @@ from app.config.employees import list_employees, get_employee, EMPLOYEE_MAP
 from app.config.datasources import list_datasources
 from app.services.opportunity_scanner import OpportunityScannerService
 from app.services.proofbook_service import ProofBookService
+from app.services.agent_runtime import get_agent_runtime, RuntimeTask
 from app.models.opportunity import OnChainOpportunity
 import structlog
 
@@ -170,3 +171,49 @@ async def get_contributions(
         "count": len(contributions),
         "contributions": contributions,
     }
+
+
+@router.post("/employees/{employee_id}/task", tags=["workforce"])
+async def submit_employee_task(
+    employee_id: str,
+    task_type: str,
+    payload: dict = None,
+    priority: int = 3,
+):
+    """Submit a task to the Agent Runtime queue for an employee."""
+    try:
+        emp = get_employee(employee_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    runtime = await get_agent_runtime()
+    task = RuntimeTask(
+        task_id=f"task-{employee_id}-{__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()}",
+        task_type=task_type,
+        employee_id=employee_id,
+        department_id=emp.department_id,
+        payload=payload or {},
+        priority=priority,
+    )
+    await runtime.submit_task(task)
+    await runtime.heartbeat(employee_id)
+    return {"status": "submitted", "task_id": task.task_id, "employee_id": employee_id}
+
+
+@router.get("/employees/{employee_id}/heartbeat", tags=["workforce"])
+async def check_employee_heartbeat(employee_id: str):
+    """Check if an employee has a recent heartbeat."""
+    try:
+        emp = get_employee(employee_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    runtime = await get_agent_runtime()
+    alive = await runtime.is_alive(employee_id)
+    return {"employee_id": employee_id, "name": emp.name, "alive": alive}
+
+
+@router.get("/queue", tags=["workforce"])
+async def get_queue_status(department_id: Optional[str] = None):
+    """Get Agent Runtime task queue size."""
+    runtime = await get_agent_runtime()
+    size = await runtime.pool.queue.size(department_id)
+    return {"queue_size": size, "department_id": department_id}
