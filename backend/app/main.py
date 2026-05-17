@@ -9,6 +9,10 @@ from app.core.config import settings
 from app.db.database import init_db
 from app.api.routes import router
 from app.api.llm import router as llm_router
+from app.api.workforce import router as workforce_router
+from app.api.opportunities import router as opportunities_router
+from app.api.datasources import router as datasources_router
+from app.api.treasury import router as treasury_router
 
 logger = structlog.get_logger()
 
@@ -46,6 +50,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Routes
 app.include_router(router)
 app.include_router(llm_router)
+app.include_router(workforce_router)
+app.include_router(opportunities_router)
+app.include_router(datasources_router)
+app.include_router(treasury_router)
 
 
 @app.get("/")
@@ -64,6 +72,10 @@ async def root():
             "ProofBook",
             "SettlementOS",
             "WorldBridge",
+            "ProfitIntelligenceOS",
+            "WorkforceOS",
+            "OpportunityOS",
+            "TreasuryOS",
         ],
         "docs": "/docs",
         "health": "/api/v1/health",

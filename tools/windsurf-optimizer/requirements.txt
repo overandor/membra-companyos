@@ -1,0 +1,5 @@
+rumps==0.4.0
+psutil==5.9.8
+py2app==0.28.10
+requests==2.34.2
+pyobjc-framework-Cocoa==12.1

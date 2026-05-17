@@ -1,7 +1,20 @@
 """MEMBRA CompanyOS — Database configuration."""
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import declarative_base
 from app.core.config import settings
+
+# Import the unified Base from models so all tables are registered
+from app.models.base import Base
+
+# Import all models to ensure they're registered with metadata
+import app.models.agent
+import app.models.company
+import app.models.governance
+import app.models.intent
+import app.models.job
+import app.models.proofbook
+import app.models.task
+import app.models.worldbridge
+import app.models.opportunity
 
 # Async engine for FastAPI
 async_engine = create_async_engine(
@@ -20,9 +33,6 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     autoflush=False,
 )
-
-# Declarative base for all models
-Base = declarative_base()
 
 
 async def get_db() -> AsyncSession:

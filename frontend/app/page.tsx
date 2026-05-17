@@ -1,194 +1,94 @@
 "use client";
-
-import { useState } from "react";
-import {
-  intentDrivenUI,
-  schemaToComponent,
-  predictiveOrchestrate,
-  chatGovernance,
-  verifyProof,
-  agentSwarmProxy,
-} from "../lib/llm";
-
-const PATTERNS = [
-  {
-    id: "intent-ui",
-    name: "IntentDrivenUI",
-    desc: "Natural language mutates React state via backend LLM",
-    color: "#c9a84c",
-  },
-  {
-    id: "schema-component",
-    name: "SchemaToComponent",
-    desc: "SQLAlchemy schema auto-generates React components",
-    color: "#e4c76b",
-  },
-  {
-    id: "predict",
-    name: "PredictiveOrchestration",
-    desc: "LLM predicts next needs; backend pre-computes",
-    color: "#60a5fa",
-  },
-  {
-    id: "governance-chat",
-    name: "ChatGovernance",
-    desc: "Approve/reject via conversational LLM",
-    color: "#f87171",
-  },
-  {
-    id: "verify-proof",
-    name: "MultimodalProof",
-    desc: "Vision LLM verifies images as task proof",
-    color: "#34d399",
-  },
-  {
-    id: "swarm",
-    name: "AgentSwarmProxy",
-    desc: "One LLM proxy routes to multiple agents",
-    color: "#a78bfa",
-  },
-];
-
-export default function Dashboard() {
-  const [logs, setLogs] = useState<string[]>([
-    "[16:42:01] IntentDrivenUI: 'open task panel' → {task_panel: expanded}",
-    "[16:42:03] PredictiveOrchestration: pre-fetched /api/v1/agents",
-    "[16:42:05] AgentSwarmProxy: dispatched strategy + finance agents",
-  ]);
-
-  const [activePattern, setActivePattern] = useState<string>("intent-ui");
-  const [inputText, setInputText] = useState("");
-  const [output, setOutput] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const addLog = (msg: string) => {
-    setLogs((prev: string[]) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 50));
-  };
-
-  const runPattern = async () => {
-    if (!inputText.trim()) return;
-    setLoading(true);
-    setOutput(null);
-    addLog(`${activePattern}: invoking backend LLM bridge...`);
-
-    try {
-      let res: Record<string, unknown> = {};
-      switch (activePattern) {
-        case "intent-ui":
-          res = await intentDrivenUI(inputText, "/");
-          break;
-        case "schema-component":
-          res = await schemaToComponent("world_asset", [
-            { name: "asset_type", type: "string", nullable: false },
-            { name: "name", type: "string", nullable: false },
-            { name: "price", type: "float", nullable: true },
-          ]);
-          break;
-        case "predict":
-          res = await predictiveOrchestrate("user_001", []);
-          break;
-        case "governance-chat":
-          res = await chatGovernance(inputText, "0xdeadbeef");
-          break;
-        case "verify-proof":
-          res = await verifyProof("task_001", inputText, "image/png");
-          break;
-        case "swarm":
-          res = await agentSwarmProxy(inputText, "0xdeadbeef");
-          break;
-      }
-      setOutput(res);
-      addLog(`${activePattern}: response received (confidence ${(res.confidence as number) ?? 0.8})`);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`${activePattern}: ERROR — ${message}`);
-      setOutput({ error: message });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <main className="min-h-screen p-6 md:p-10">
-      <header className="mb-10">
-        <h1 className="text-4xl font-bold gold-text tracking-tight">MEMBRA CompanyOS</h1>
-        <p className="mt-2 text-membra-muted max-w-xl">
-          The orchestration layer where AI builds, governs, and operates real-world companies
-          through proof, permission, and local execution.
-        </p>
-        <p className="mt-1 text-xs text-membra-gold font-mono">6 Novel LLM Patterns — Frontend ↔ Backend</p>
-      </header>
-
-      {/* Pattern Selector */}
-      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
-        {PATTERNS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => { setActivePattern(p.id); setOutput(null); }}
-            className={`card p-4 text-left transition-all hover:scale-[1.02] ${
-              activePattern === p.id ? "ring-2 ring-membra-gold" : ""
-            }`}
-          >
-            <div className="text-xs font-bold mb-1" style={{ color: p.color }}>{p.name}</div>
-            <div className="text-[11px] text-membra-muted leading-tight">{p.desc}</div>
-          </button>
-        ))}
-      </section>
-
-      {/* Active Pattern Panel */}
-      <section className="card p-6 mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold gold-text">
-            {PATTERNS.find((p) => p.id === activePattern)?.name}
-          </h2>
-          <span className="text-xs font-mono text-membra-muted bg-membra-surface px-2 py-1 rounded">
-            POST /api/v1/llm/{activePattern}
-          </span>
-        </div>
-
-        <div className="flex gap-3 mb-4">
-          <input
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && runPattern()}
-            placeholder={
-              activePattern === "intent-ui" ? "Say: 'open task panel' or 'show pending approvals'..."
-              : activePattern === "schema-component" ? "Table name to generate component for..."
-              : activePattern === "predict" ? "User ID for prediction..."
-              : activePattern === "governance-chat" ? "Say: 'approve' or 'show pending'..."
-              : activePattern === "verify-proof" ? "Paste base64 image data..."
-              : "Message for agent swarm..."
-            }
-            className="flex-1 bg-membra-surface border border-membra-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-membra-gold"
-          />
-          <button
-            onClick={runPattern}
-            disabled={loading}
-            className="btn-primary disabled:opacity-50"
-          >
-            {loading ? "Processing..." : "Invoke LLM"}
-          </button>
-        </div>
-
-        {output && (
-          <div className="bg-membra-surface border border-membra-border rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-membra-muted mb-2">Response</h3>
-            <pre className="text-xs font-mono text-green-400 overflow-x-auto">
-              {JSON.stringify(output, null, 2)}
-            </pre>
-          </div>
-        )}
-      </section>
-
-      {/* Live Logs */}
-      <section className="card p-6">
-        <h2 className="text-lg font-semibold mb-3">Orchestration Log</h2>
-        <div className="bg-membra-surface border border-membra-border rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs">
-          {logs.map((log: string, i: number) => (
-            <div key={i} className="mb-1 text-green-400">{log}</div>
-          ))}
-        </div>
-      </section>
-    </main>
-  );
+import{useState,useEffect}from"react";
+const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
+export default function Dashboard(){
+const[tab,setTab]=useState("overview");
+const[data,setData]=useState({employees:[],departments:[],opportunities:[],stats:null});
+const[loading,setLoading]=useState(true);
+useEffect(()=>{fetchData();},[]);
+const fetchData=async()=>{setLoading(true);try{const[e,d,o,s]=await Promise.all([fetch(API+"/api/v1/workforce/employees").then(r=>r.json()),fetch(API+"/api/v1/workforce/departments").then(r=>r.json()),fetch(API+"/api/v1/opportunities").then(r=>r.json()),fetch(API+"/api/v1/treasury/stats").then(r=>r.json()),]);setData({employees:e.employees||[],departments:d.departments||[],opportunities:o.opportunities||[],stats:s});}catch(e){console.error(e);}setLoading(false);};
+const wb=(t)=>({WATCH_ONLY:"bg-gray-700 text-gray-300",PAPER:"bg-blue-900 text-blue-300",PROPOSAL_ONLY:"bg-yellow-900 text-yellow-300",TREASURY_GATED:"bg-red-900 text-red-300"})[t]||"bg-gray-700";
+const oc=(s)=>s==="approved"||s==="executed"?"text-green-400":s==="rejected"||s==="failed"?"text-red-400":s==="pending"?"text-yellow-400":"text-gray-400";
+const{employees,departments,opportunities,stats}=data;
+return(
+<main className="min-h-screen p-6 bg-[#0a0a0f] text-white">
+<h1 className="text-3xl font-bold text-[#c9a84c]">MEMBRA CompanyOS</h1>
+<p className="text-sm text-gray-400">60-Employee On-Chain Profit Intelligence</p>
+<div className="mt-3 flex gap-2">
+{[{k:"overview",l:"Overview"},{k:"employees",l:"Employees"},{k:"opportunities",l:"Opportunities"},{k:"departments",l:"Departments"}].map(t=>(
+<button key={t.k} onClick={()=>setTab(t.k)} className={`px-3 py-1 text-xs rounded border ${tab===t.k?"bg-[#c9a84c] text-black border-[#c9a84c]":"bg-transparent text-gray-400 border-gray-700"}`}>{t.l}</button>
+))}
+</div>
+{loading&&<div className="text-center text-gray-500 py-20">Loading...</div>}
+{!loading&&tab==="overview"&&(<><section className="grid grid-cols-2 md:grid-cols-4 gap-4 my-6">
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4"><div className="text-xs text-gray-500">Employees</div><div className="text-2xl font-bold">{employees.length}</div></div>
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4"><div className="text-xs text-gray-500">Departments</div><div className="text-2xl font-bold">{departments.length}</div></div>
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4"><div className="text-xs text-gray-500">Opportunities</div><div className="text-2xl font-bold">{opportunities.length}</div></div>
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4"><div className="text-xs text-gray-500">Executed</div><div className="text-2xl font-bold text-green-400">{stats?.opportunities?.executed||0}</div></div>
+</section>
+<section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4">
+<h2 className="text-sm font-semibold text-gray-300 mb-3">Recent Opportunities</h2>
+<div className="space-y-2 max-h-64 overflow-y-auto">
+{opportunities.slice(0,10).map(o=>(
+<div key={o.id} className="flex justify-between text-xs bg-[#0a0a0f] p-2 rounded">
+<div><span className="text-gray-400">{o.chain}</span><span className="text-[#c9a84c] ml-1">{o.protocol}</span><div className="text-gray-500">{o.opportunity_type}</div></div>
+<div className="text-right"><div className="text-green-400">+${o.expected_profit?.toFixed(0)}</div><div className={oc(o.approval_status)}>{o.approval_status}</div></div>
+</div>
+))}
+{opportunities.length===0&&<div className="text-gray-600 text-xs">No opportunities yet.</div>}
+</div>
+</div>
+<div className="bg-[#12121a] border border-gray-800 rounded-lg p-4">
+<h2 className="text-sm font-semibold text-gray-300 mb-3">Wallet Modes</h2>
+{[{wt:"WATCH_ONLY",l:"Watch Only"},{wt:"PAPER",l:"Paper"},{wt:"PROPOSAL_ONLY",l:"Proposal"},{wt:"TREASURY_GATED",l:"Treasury"}].map(w=>(
+<div key={w.wt} className="flex justify-between text-xs mb-2"><span className={`px-2 py-0.5 rounded ${wb(w.wt)}`}>{w.l}</span><span className="text-gray-400">{employees.filter(e=>e.wallet_type===w.wt).length}</span></div>
+))}
+</div>
+</section></>)}
+{!loading&&tab==="employees"&&(<section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mt-6">
+{employees.map(e=>(
+<div key={e.employee_id} className="bg-[#12121a] border border-gray-800 rounded-lg p-3 hover:border-gray-600">
+<div className="flex justify-between mb-1"><div className="text-sm font-semibold truncate">{e.name}</div><span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-300">{e.status}</span></div>
+<div className="text-xs text-gray-500 mb-1">{e.title}</div>
+<div className="text-[10px] text-gray-600 mb-2">{e.department_id?.replace("dept-","")}</div>
+<div className="flex gap-2"><span className={`text-[10px] px-1.5 py-0.5 rounded ${wb(e.wallet_type)}`}>{e.wallet_type}</span><span className="text-[10px] text-gray-600">${e.risk_limit?.toLocaleString()}</span></div>
+</div>
+))}
+</section>)}
+{!loading&&tab==="opportunities"&&(<section className="mt-6">
+<button onClick={fetchData} className="px-3 py-1 text-xs bg-[#c9a84c] text-black rounded font-medium mb-4">Refresh</button>
+<div className="overflow-x-auto">
+<table className="w-full text-xs"><thead><tr className="text-left text-gray-500 border-b border-gray-800"><th className="pb-2">Type</th><th className="pb-2">Chain</th><th className="pb-2">Protocol</th><th className="pb-2">Profit</th><th className="pb-2">Conf</th><th className="pb-2">Risk</th><th className="pb-2">Compliance</th><th className="pb-2">Sim</th><th className="pb-2">Approval</th><th className="pb-2">Exec</th></tr></thead><tbody>
+{opportunities.map(o=>(
+<tr key={o.id} className="border-b border-gray-900 hover:bg-[#1a1a24]">
+<td className="py-2 text-gray-300">{o.opportunity_type}</td>
+<td className="py-2 text-gray-400">{o.chain}</td>
+<td className="py-2 text-[#c9a84c]">{o.protocol}</td>
+<td className="py-2 text-green-400">${o.expected_profit?.toFixed(0)}</td>
+<td className="py-2 text-gray-400">{(o.confidence_score*100).toFixed(0)}%</td>
+<td className="py-2 text-gray-400">{o.risk_score!==null?(o.risk_score*100).toFixed(0):"-"}</td>
+<td className="py-2 text-gray-400">{o.compliance_score!==null?(o.compliance_score*100).toFixed(0):"-"}</td>
+<td className="py-2 text-gray-500">{o.simulation_status}</td>
+<td className={"py-2 "+oc(o.approval_status)}>{o.approval_status}</td>
+<td className={"py-2 "+oc(o.execution_status)}>{o.execution_status}</td>
+</tr>
+))}
+</tbody></table>
+{opportunities.length===0&&<div className="text-gray-600 text-xs py-8 text-center">No opportunities yet.</div>}
+</div>
+</section>)}
+{!loading&&tab==="departments"&&(<section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+{departments.map(d=>(
+<div key={d.department_id} className="bg-[#12121a] border border-gray-800 rounded-lg p-4">
+<div className="text-lg font-bold text-[#c9a84c] mb-1">{d.name}</div>
+<div className="text-xs text-gray-500 mb-2">{d.department_id}</div>
+<div className="text-xs text-gray-400 mb-3 line-clamp-2">{d.mission}</div>
+<div className="flex gap-2 mb-2"><span className={`text-[10px] px-1.5 py-0.5 rounded ${wb(d.wallet_policy)}`}>{d.wallet_policy}</span><span className="text-[10px] text-gray-600">Risk:{d.risk_tolerance}</span></div>
+<div className="text-[10px] text-gray-600">Limit:${d.risk_limit?.toLocaleString()}</div>
+</div>
+))}
+</section>)}
+</main>
+);
 }

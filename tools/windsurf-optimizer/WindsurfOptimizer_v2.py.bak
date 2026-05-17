@@ -1,0 +1,757 @@
+#!/usr/bin/env python3
+"""
+Windsurf Optimizer
+macOS menu-bar app with neomorphic UI panel.
+Decompresses RAM / CPU / GPU and boosts Windsurf IDE performance.
+Includes local Ollama LLM chat.
+Optimized for Apple Silicon M-series (M1–M5 Pro).
+"""
+
+import gc
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from pathlib import Path
+from tkinter import font as tkfont
+from typing import Any, Dict, List, Optional, Tuple
+from urllib import request as urllib_request
+
+import psutil
+import rumps
+
+# ─── Constants ────────────────────────────────────────────────────
+APP_NAME = "Windsurf Optimizer"
+ICON_DISK = "💿"
+ICON_SPINNER = "🌀"
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+WINDSURF_NAMES = {"Windsurf", "windsurf", "Code Helper",
+                  "Code-Helper", "Electron", "windsurf Helper"}
+
+# Neomorphic dark palette
+_BG = "#1a1a2e"
+_CARD = "#16213e"
+_SHADOW_DARK = "#0f0f23"
+_SHADOW_LIGHT = "#2a2a5c"
+_TEXT = "#e0e5ec"
+_TEXT_DIM = "#8892b0"
+_ACCENT = "#e94560"
+_ACCENT_HOVER = "#ff6b81"
+_OK = "#4ade80"
+_WARN = "#fbbf24"
+
+# ─── Helpers ──────────────────────────────────────────────────────
+
+
+def _run(cmd: str, sudo: bool = False, timeout: int = 30) -> Tuple[bool, str]:
+    try:
+        if sudo:
+            cmd = (f"osascript -e 'do shell script \"{cmd}\" "
+                   f"with administrator privileges'")
+        res = subprocess.run(cmd, shell=True, capture_output=True,
+                             text=True, timeout=timeout)
+        return res.returncode == 0, res.stdout.strip()
+    except Exception as e:
+        return False, str(e)
+
+
+def _sysctl(name: str) -> str:
+    try:
+        return subprocess.run(["sysctl", "-n", name],
+                              capture_output=True, text=True,
+                              timeout=2).stdout.strip()
+    except Exception:
+        return ""
+
+
+# ─── System Info ──────────────────────────────────────────────────
+
+
+class SystemInfo:
+    @staticmethod
+    def ram() -> Dict[str, Any]:
+        vm = psutil.virtual_memory()
+        return {
+            "pct": vm.percent,
+            "used_gb": round(vm.used / (1024 ** 3), 1),
+            "total_gb": round(vm.total / (1024 ** 3), 1),
+        }
+
+    @staticmethod
+    def cpu() -> Dict[str, Any]:
+        return {
+            "pct": psutil.cpu_percent(interval=0.3),
+            "cores": psutil.cpu_count(logical=True),
+        }
+
+    @staticmethod
+    def gpu() -> Dict[str, Any]:
+        return {"pressure": psutil.virtual_memory().percent}
+
+    @staticmethod
+    def is_apple_silicon() -> bool:
+        return _sysctl("hw.optional.arm64") == "1"
+
+    @staticmethod
+    def chip_name() -> str:
+        return _sysctl("machdep.cpu.brand_string")
+
+
+# ─── Optimizer Engine ───────────────────────────────────────────────
+
+
+class Optimizer:
+    def __init__(self, on_log=None):
+        self.on_log = on_log or (lambda _: None)
+        self.is_as = SystemInfo.is_apple_silicon()
+        self.chip = SystemInfo.chip_name()
+
+    def _log(self, msg: str):
+        self.on_log(msg)
+
+    def ram(self) -> List[str]:
+        out = []
+        if self.chip:
+            out.append(f"Chip: {self.chip}")
+        ok, msg = _run("purge", sudo=True)
+        out.append(f"purge: {'ok' if ok else msg}")
+        if self.is_as:
+            _run("sysctl -w vm.page_free_wanted=16384 >/dev/null 2>&1", sudo=True)
+            out.append("AS reclaim triggered")
+        _run("dscacheutil -flushcache; killall -HUP mDNSResponder", sudo=True)
+        out.append("DNS flushed")
+        cutoff = time.time() - 300
+        for cdir in (
+            Path.home() / "Library" / "Caches",
+            Path.home() / "Library" / "Caches" / "com.apple.WebKit.Networking",
+        ):
+            if not cdir.exists():
+                continue
+            for f in cdir.rglob("*"):
+                try:
+                    if f.is_file() and f.stat().st_atime < cutoff:
+                        f.unlink()
+                except Exception:
+                    pass
+        out.append("stale caches cleared")
+        gc.collect()
+        out.append("GC done")
+        return out
+
+    def cpu(self) -> List[str]:
+        out = []
+        windsurf = []
+        heavy = []
+        for proc in psutil.process_iter(["pid", "name", "cpu_percent", "create_time"]):
+            try:
+                n = proc.info["name"] or ""
+                pid = proc.info["pid"]
+                if any(t in n for t in WINDSURF_NAMES):
+                    windsurf.append((pid, n))
+                elif self.is_as and "Helper" in n and any(w in n for w in ["Windsurf", "Code", "Electron"]):
+                    cpu = proc.info.get("cpu_percent") or 0
+                    born = proc.info.get("create_time") or time.time()
+                    if cpu > 50 and (time.time() - born) > 120:
+                        heavy.append((pid, n))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        for pid, n in windsurf:
+            os.system(f"renice -n -10 -p {pid} >/dev/null 2>&1")
+            out.append(f"boosted {n}({pid})")
+        if self.is_as:
+            for pid, n in heavy:
+                os.system(f"taskpolicy -b -p {pid} >/dev/null 2>&1")
+                out.append(f"throttled {n}({pid})")
+        _run("defaults write com.exafunction.windsurf NSAppSleepDisabled -bool true")
+        out.append("App Nap disabled")
+        _run("mdutil -a -i off >/dev/null 2>&1", sudo=True)
+        out.append("Spotlight paused")
+        return out
+
+    def gpu(self) -> List[str]:
+        out = []
+        _run("qlmanage -r >/dev/null 2>&1; qlmanage -r cache >/dev/null 2>&1")
+        out.append("QuickLook flushed")
+        _run("atsutil databases -removeUser")
+        out.append("font cache flushed")
+        ca = Path.home() / "Library" / "Caches" / "com.apple.coreanimation"
+        if ca.exists():
+            shutil.rmtree(ca, ignore_errors=True)
+            out.append("CoreAnimation cleared")
+        _run("purge", sudo=True)
+        out.append("memory relieved")
+        return out
+
+    def windsurf(self) -> List[str]:
+        out = []
+        for cdir in (
+            Path.home() / "Library" / "Application Support" / "Windsurf" / "Cache",
+            Path.home() / "Library" / "Application Support" / "Windsurf" / "CachedData",
+            Path.home() / "Library" / "Application Support" / "Windsurf" / "Code Cache",
+            Path.home() / "Library" / "Application Support" / "Windsurf" / "GPUCache",
+            Path.home() / "Library" / "Caches" / "Windsurf",
+            Path.home() / "Library" / "Application Support" / "Windsurf" / "CachedExtensionVSIXs",
+        ):
+            if cdir.exists():
+                shutil.rmtree(cdir, ignore_errors=True)
+                out.append(f"cleared {cdir.name}")
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                n = proc.info["name"] or ""
+                if any(t in n for t in WINDSURF_NAMES):
+                    pid = proc.info["pid"]
+                    os.system(f"renice -n -10 -p {pid} >/dev/null 2>&1")
+                    if self.is_as:
+                        os.system(f"taskpolicy -d user_interactive -p {pid} >/dev/null 2>&1")
+                    out.append(f"boosted {n}({pid})")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        _run('defaults write com.exafunction.windsurf "crashes.reportUnhandledExceptions" -bool false')
+        out.append("telemetry disabled")
+        return out
+
+    def full(self) -> List[str]:
+        return self.ram() + self.cpu() + self.gpu() + self.windsurf()
+
+
+# ─── Ollama Client ────────────────────────────────────────────────
+
+
+class OllamaClient:
+    def __init__(self, host: str = OLLAMA_HOST):
+        self.host = host.rstrip("/")
+
+    def _url(self, path: str) -> str:
+        return f"{self.host}{path}"
+
+    def is_running(self) -> bool:
+        try:
+            with urllib_request.urlopen(self._url("/api/tags"), timeout=2) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    def list_models(self) -> List[str]:
+        try:
+            with urllib_request.urlopen(self._url("/api/tags"), timeout=5) as r:
+                data = json.loads(r.read())
+                return [m["name"] for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    def chat(self, model: str, prompt: str, on_chunk):
+        """Stream a chat response; on_chunk receives each text piece."""
+        payload = json.dumps({"model": model, "prompt": prompt,
+                              "stream": True}).encode()
+        req = urllib_request.Request(
+            self._url("/api/generate"),
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=60) as resp:
+                for line in resp:
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line.decode("utf-8"))
+                        if "response" in obj:
+                            on_chunk(obj["response"])
+                        if obj.get("done"):
+                            break
+                    except Exception:
+                        pass
+        except Exception as e:
+            on_chunk(f"\n[Error: {e}]")
+
+
+# ─── Neomorphic TK Canvas helpers ─────────────────────────────────
+
+
+def _rnd_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
+    """Draw a rounded rectangle on a canvas."""
+    points = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+              x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+              x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return canvas.create_polygon(points, smooth=True, **kw)
+
+
+def _shadow_rect(canvas, x1, y1, x2, y2, r, bg, sd, sl):
+    """Draw a neomorphic raised card with soft shadow."""
+    # dark shadow
+    _rnd_rect(canvas, x1 + 3, y1 + 3, x2 + 3, y2 + 3, r,
+              fill=sd, outline="")
+    # light highlight
+    _rnd_rect(canvas, x1 - 2, y1 - 2, x2 - 2, y2 - 2, r,
+              fill=sl, outline="")
+    # main body
+    return _rnd_rect(canvas, x1, y1, x2, y2, r,
+                     fill=bg, outline="")
+
+
+def _inset_rect(canvas, x1, y1, x2, y2, r, bg, sd, sl):
+    """Draw a pressed / inset neomorphic card."""
+    _rnd_rect(canvas, x1 - 2, y1 - 2, x2 - 2, y2 - 2, r,
+              fill=sd, outline="")
+    _rnd_rect(canvas, x1 + 2, y1 + 2, x2 + 2, y2 + 2, r,
+              fill=sl, outline="")
+    return _rnd_rect(canvas, x1, y1, x2, y2, r,
+                     fill=bg, outline="")
+
+
+class NeomorphicButton:
+    def __init__(self, parent: tk.Canvas, x, y, w, h, text, cmd,
+                 bg=_CARD, accent=_ACCENT):
+        self.canvas = parent
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.text = text
+        self.cmd = cmd
+        self.bg = bg
+        self.accent = accent
+        self.pressed = False
+        self._draw()
+        self._bind()
+
+    def _draw(self):
+        for tag in getattr(self, "_tags", []):
+            self.canvas.delete(tag)
+        self._tags = []
+        x1, y1 = self.x, self.y
+        x2, y2 = self.x + self.w, self.y + self.h
+        if self.pressed:
+            t = _inset_rect(self.canvas, x1, y1, x2, y2, 16,
+                            self.bg, _SHADOW_DARK, _SHADOW_LIGHT)
+        else:
+            t = _shadow_rect(self.canvas, x1, y1, x2, y2, 16,
+                             self.bg, _SHADOW_DARK, _SHADOW_LIGHT)
+        self._tags.append(t)
+        tx = self.canvas.create_text(
+            (x1 + x2) // 2, (y1 + y2) // 2,
+            text=self.text, fill=self.accent,
+            font=("SF Pro Display", 11, "bold"),
+            tags=("btn",)
+        )
+        self._tags.append(tx)
+        self.canvas.tag_bind(t, "<Button-1>", self._on_press)
+        self.canvas.tag_bind(tx, "<Button-1>", self._on_press)
+        self.canvas.tag_bind(t, "<ButtonRelease-1>", self._on_release)
+        self.canvas.tag_bind(tx, "<ButtonRelease-1>", self._on_release)
+
+    def _bind(self):
+        self.canvas.tag_bind("btn", "<Enter>",
+                             lambda e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind("btn", "<Leave>",
+                             lambda e: self.canvas.config(cursor=""))
+
+    def _on_press(self, _):
+        self.pressed = True
+        self._draw()
+
+    def _on_release(self, _):
+        self.pressed = False
+        self._draw()
+        self.cmd()
+
+
+class StatCard:
+    def __init__(self, canvas: tk.Canvas, x, y, w, h, label, value_getter):
+        self.canvas = canvas
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.label = label
+        self.get_value = value_getter
+        self._draw()
+
+    def _draw(self):
+        x1, y1 = self.x, self.y
+        x2, y2 = x1 + self.w, y1 + self.h
+        _shadow_rect(self.canvas, x1, y1, x2, y2, 18,
+                     _CARD, _SHADOW_DARK, _SHADOW_LIGHT)
+        self.canvas.create_text(
+            (x1 + x2) // 2, y1 + 28,
+            text=self.label, fill=_TEXT_DIM,
+            font=("SF Pro Display", 10)
+        )
+        self.val_id = self.canvas.create_text(
+            (x1 + x2) // 2, y1 + 58,
+            text=self.get_value(), fill=_TEXT,
+            font=("SF Pro Display", 18, "bold")
+        )
+
+    def refresh(self):
+        self.canvas.itemconfig(self.val_id, text=self.get_value())
+
+
+# ─── Neomorphic Panel ─────────────────────────────────────────────
+
+
+class NeomorphicPanel:
+    def __init__(self, app):
+        self.app = app
+        self.opt = Optimizer(on_log=self._log)
+        self.ollama = OllamaClient()
+        self.models: List[str] = []
+        self.chat_history: List[Tuple[str, str]] = []  # (role, text)
+
+        self.root = tk.Tk()
+        self.root.title(APP_NAME)
+        self.root.configure(bg=_BG)
+        self.root.geometry("540x780")
+        self.root.overrideredirect(True)
+        self._center_window()
+        self.root.attributes("-alpha", 0.0)
+
+        # Title bar drag
+        self._drag_data = {"x": 0, "y": 0}
+
+        self._build_ui()
+        self.root.after(10, lambda: self.root.attributes("-alpha", 1.0))
+        self.root.withdraw()
+
+        # Polling threads
+        self._poll_models()
+        self._start_stats_refresh()
+
+    def _center_window(self):
+        self.root.update_idletasks()
+        w, h = 540, 780
+        x = (self.root.winfo_screenwidth() // 2) - (w // 2)
+        y = (self.root.winfo_screenheight() // 2) - (h // 2)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _build_ui(self):
+        # Main canvas
+        self.cv = tk.Canvas(self.root, bg=_BG, highlightthickness=0)
+        self.cv.pack(fill=tk.BOTH, expand=True)
+
+        # Title bar
+        self._draw_title_bar()
+
+        # Stat cards
+        self.ram_card = StatCard(self.cv, 20, 55, 155, 90, "RAM",
+                                 lambda: f"{SystemInfo.ram()['pct']:.0f}%")
+        self.cpu_card = StatCard(self.cv, 192, 55, 155, 90, "CPU",
+                                 lambda: f"{SystemInfo.cpu()['pct']:.0f}%")
+        self.gpu_card = StatCard(self.cv, 364, 55, 155, 90, "GPU",
+                                 lambda: f"{SystemInfo.gpu()['pressure']:.0f}%")
+        self.cards = [self.ram_card, self.cpu_card, self.gpu_card]
+
+        # Chip label
+        chip = SystemInfo.chip_name()
+        self.cv.create_text(270, 160, text=chip or "Mac",
+                            fill=_TEXT_DIM, font=("SF Pro Display", 9))
+
+        # Optimizer buttons
+        NeomorphicButton(self.cv, 20, 180, 115, 42, "🧠 RAM",
+                         lambda: self._run_opt("ram"))
+        NeomorphicButton(self.cv, 148, 180, 115, 42, "⚡ CPU",
+                         lambda: self._run_opt("cpu"))
+        NeomorphicButton(self.cv, 276, 180, 115, 42, "🎮 GPU",
+                         lambda: self._run_opt("gpu"))
+        NeomorphicButton(self.cv, 404, 180, 115, 42, "🌊 WS",
+                         lambda: self._run_opt("windsurf"))
+        NeomorphicButton(self.cv, 20, 232, 500, 48, "🌀 FULL SYSTEM OPTIMIZE",
+                         lambda: self._run_opt("full"), accent=_OK)
+
+        # Log area
+        _shadow_rect(self.cv, 20, 292, 520, 420, 18,
+                     _CARD, _SHADOW_DARK, _SHADOW_LIGHT)
+        self.cv.create_text(270, 312, text="Activity Log",
+                            fill=_TEXT_DIM, font=("SF Pro Display", 10))
+
+        self.log_text = tk.Text(self.root, bg=_CARD, fg=_TEXT,
+                                highlightthickness=0, borderwidth=0,
+                                font=("SF Mono", 9), wrap=tk.WORD)
+        self.log_text.place(x=32, y=328, width=476, height=170)
+        self.log_text.config(state=tk.DISABLED)
+
+        # Ollama section label
+        self.cv.create_text(270, 512, text="Ollama LLM",
+                            fill=_TEXT_DIM, font=("SF Pro Display", 10))
+
+        # Model selector
+        self.model_var = tk.StringVar(value="Select model…")
+        self.model_menu = tk.OptionMenu(self.root, self.model_var, "Select model…")
+        self.model_menu.config(bg=_CARD, fg=_TEXT, highlightthickness=0,
+                               borderwidth=0, font=("SF Pro Display", 9))
+        self.model_menu["menu"].config(bg=_CARD, fg=_TEXT,
+                                       activebackground=_ACCENT,
+                                       activeforeground="white")
+        self.model_menu.place(x=32, y=528, width=200, height=26)
+
+        # Chat display
+        self.chat_box = tk.Text(self.root, bg=_CARD, fg=_TEXT,
+                                highlightthickness=0, borderwidth=0,
+                                font=("SF Pro Display", 10), wrap=tk.WORD)
+        self.chat_box.place(x=32, y=562, width=476, height=100)
+        self.chat_box.config(state=tk.DISABLED)
+
+        # Chat input
+        self.entry = tk.Entry(self.root, bg=_CARD, fg=_TEXT,
+                              highlightthickness=0, borderwidth=0,
+                              font=("SF Pro Display", 10),
+                              insertbackground=_TEXT)
+        self.entry.place(x=32, y=672, width=400, height=28)
+        self.entry.bind("<Return>", lambda e: self._send_chat())
+
+        # Send button
+        NeomorphicButton(self.cv, 440, 670, 80, 32, "Send",
+                         self._send_chat, accent=_ACCENT)
+
+        # Auto-optimize toggle
+        self.auto_var = tk.BooleanVar(value=False)
+        cb = tk.Checkbutton(self.root, text="Auto every 5m",
+                            variable=self.auto_var, bg=_BG, fg=_TEXT_DIM,
+                            selectcolor=_CARD, activebackground=_BG,
+                            activeforeground=_TEXT, font=("SF Pro Display", 9),
+                            command=self._toggle_auto)
+        cb.place(x=32, y=716)
+
+        # Close button
+        NeomorphicButton(self.cv, 440, 712, 80, 30, "Close",
+                         self.hide, accent=_TEXT_DIM)
+
+    def _draw_title_bar(self):
+        self.cv.create_rectangle(0, 0, 540, 40, fill=_BG, outline="")
+        self.cv.create_text(270, 20, text=APP_NAME,
+                            fill=_TEXT, font=("SF Pro Display", 13, "bold"))
+        # Drag bindings
+        self.cv.bind("<Button-1>", self._start_drag)
+        self.cv.bind("<B1-Motion>", self._do_drag)
+
+    def _start_drag(self, e):
+        self._drag_data["x"] = e.x_root - self.root.winfo_x()
+        self._drag_data["y"] = e.y_root - self.root.winfo_y()
+
+    def _do_drag(self, e):
+        x = e.x_root - self._drag_data["x"]
+        y = e.y_root - self._drag_data["y"]
+        self.root.geometry(f"+{x}+{y}")
+
+    # ── Stats polling ─────────────────────────────────────────────
+
+    def _start_stats_refresh(self):
+        def tick():
+            for card in self.cards:
+                card.refresh()
+            self.root.after(2000, tick)
+        tick()
+
+    # ── Ollama ────────────────────────────────────────────────────
+
+    def _poll_models(self):
+        def fetch():
+            self.models = self.ollama.list_models()
+            self.root.after(0, self._update_model_menu)
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _update_model_menu(self):
+        menu = self.model_menu["menu"]
+        menu.delete(0, tk.END)
+        if not self.models:
+            menu.add_command(label="No models found", command=lambda: None)
+            return
+        for m in self.models:
+            menu.add_command(label=m, command=lambda val=m: self.model_var.set(val))
+        self.model_var.set(self.models[0])
+
+    def _send_chat(self):
+        model = self.model_var.get()
+        if model in ("", "Select model…") or not self.models:
+            self._append_chat("system", "No Ollama model selected. Run `ollama run <model>` first.")
+            return
+        text = self.entry.get().strip()
+        if not text:
+            return
+        self.entry.delete(0, tk.END)
+        self._append_chat("user", f"You: {text}")
+        self._append_chat("assistant", "…", pending=True)
+
+        def stream():
+            full = ""
+
+            def on_chunk(chunk: str):
+                nonlocal full
+                full += chunk
+                self.root.after(0, lambda: self._replace_pending(full))
+
+            self.ollama.chat(model, text, on_chunk)
+            self.root.after(0, self._finalize_pending)
+
+        threading.Thread(target=stream, daemon=True).start()
+
+    def _append_chat(self, role: str, text: str, pending: bool = False):
+        self.chat_box.config(state=tk.NORMAL)
+        if pending:
+            self.chat_box.insert(tk.END, text, "pending")
+            self.chat_box.tag_config("pending", foreground=_WARN)
+        else:
+            self.chat_box.insert(tk.END, text + "\n\n")
+        self.chat_box.see(tk.END)
+        self.chat_box.config(state=tk.DISABLED)
+
+    def _replace_pending(self, text: str):
+        self.chat_box.config(state=tk.NORMAL)
+        # Delete from last "pending" mark to end
+        try:
+            self.chat_box.delete("pending.first", "pending.last")
+        except tk.TclError:
+            pass
+        self.chat_box.insert(tk.END, f"AI: {text}", "pending")
+        self.chat_box.tag_config("pending", foreground=_TEXT)
+        self.chat_box.see(tk.END)
+        self.chat_box.config(state=tk.DISABLED)
+
+    def _finalize_pending(self):
+        try:
+            self.chat_box.tag_remove("pending", "pending.first", "pending.last")
+        except tk.TclError:
+            pass
+
+    # ── Optimizer ───────────────────────────────────────────────
+
+    def _run_opt(self, mode: str):
+        def task():
+            self._log(f"▶ {mode.upper()} starting…")
+            try:
+                if mode == "ram":
+                    lines = self.opt.ram()
+                elif mode == "cpu":
+                    lines = self.opt.cpu()
+                elif mode == "gpu":
+                    lines = self.opt.gpu()
+                elif mode == "windsurf":
+                    lines = self.opt.windsurf()
+                else:
+                    lines = self.opt.full()
+                for line in lines:
+                    self._log(f"  {line}")
+                self._log(f"✓ {mode.upper()} done")
+            except Exception as e:
+                self._log(f"✗ {mode.upper()} error: {e}")
+            # Refresh menu-bar stats via callback
+            self.app._refresh_stats()
+        threading.Thread(target=task, daemon=True).start()
+
+    def _log(self, msg: str):
+        ts = time.strftime("%H:%M:%S")
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, f"[{ts}] {msg}\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def _toggle_auto(self):
+        self.app.toggle_auto(self.auto_var.get())
+
+    # ── Window control ──────────────────────────────────────────
+
+    def show(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(100, lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
+
+    def hide(self):
+        self.root.withdraw()
+
+    def is_visible(self) -> bool:
+        return self.root.winfo_viewable()
+
+
+# ─── Rumps Menu-Bar App ───────────────────────────────────────────
+
+
+class WindsurfOptimizerApp(rumps.App):
+    def __init__(self):
+        super().__init__(name=APP_NAME, title=ICON_DISK, quit_button="Quit")
+        self.panel: Optional[NeomorphicPanel] = None
+        self._auto_timer = None
+        self._auto_enabled = False
+
+        self.menu = [
+            rumps.MenuItem("Open Panel", callback=self._open_panel),
+            None,
+            rumps.MenuItem("🌀 Full Optimize", callback=self._menu_full),
+            rumps.MenuItem("🧠 RAM", callback=self._menu_ram),
+            rumps.MenuItem("⚡ CPU", callback=self._menu_cpu),
+            rumps.MenuItem("🎮 GPU", callback=self._menu_gpu),
+            rumps.MenuItem("🌊 Windsurf", callback=self._menu_ws),
+            None,
+            rumps.MenuItem("📊 Refresh", callback=self._refresh_stats),
+            rumps.MenuItem("🔔 Auto 5m", callback=self._menu_auto),
+        ]
+        self._refresh_stats(None)
+
+    def _ensure_panel(self):
+        if self.panel is None:
+            self.panel = NeomorphicPanel(self)
+        return self.panel
+
+    def _open_panel(self, _):
+        self._ensure_panel().show()
+
+    def _menu_full(self, _):
+        self._ensure_panel()._run_opt("full")
+        self._ensure_panel().show()
+
+    def _menu_ram(self, _):
+        self._ensure_panel()._run_opt("ram")
+
+    def _menu_cpu(self, _):
+        self._ensure_panel()._run_opt("cpu")
+
+    def _menu_gpu(self, _):
+        self._ensure_panel()._run_opt("gpu")
+
+    def _menu_ws(self, _):
+        self._ensure_panel()._run_opt("windsurf")
+
+    def _refresh_stats(self, _):
+        ram = SystemInfo.ram()
+        cpu = SystemInfo.cpu()
+        lines = [
+            f"RAM {ram['pct']:.0f}%  CPU {cpu['pct']:.0f}%  {cpu['cores']}c",
+            f"Last: {self._last_opt_str()}",
+        ]
+        for item in self.menu:
+            if isinstance(item, rumps.MenuItem) and item.title.startswith("RAM"):
+                item.title = "\n".join(lines)
+                break
+        else:
+            # Update first item if it exists
+            for item in self.menu:
+                if isinstance(item, rumps.MenuItem) and not item.title.startswith("Open"):
+                    item.title = "\n".join(lines)
+                    break
+        return lines
+
+    def _last_opt_str(self) -> str:
+        p = self.panel
+        if p and p.opt:
+            # We don't track last time per-se in new class, skip for now
+            pass
+        return "—"
+
+    def _menu_auto(self, sender):
+        self.toggle_auto(not getattr(self, "_auto_enabled", False))
+        sender.state = self._auto_enabled
+
+    def toggle_auto(self, enabled: bool):
+        self._auto_enabled = enabled
+        if enabled:
+            self._auto_timer = rumps.Timer(lambda _: self._ensure_panel()._run_opt("full"), 300)
+            self._auto_timer.start()
+            rumps.notification(APP_NAME, "Auto-Optimize On", "Every 5 min", sound=None)
+        else:
+            if self._auto_timer:
+                self._auto_timer.stop()
+            rumps.notification(APP_NAME, "Auto-Optimize Off", "Manual mode", sound=None)
+
+
+if __name__ == "__main__":
+    WindsurfOptimizerApp().run()
