@@ -15,6 +15,7 @@ from app.api.datasources import router as datasources_router
 from app.api.treasury import router as treasury_router
 from app.api.metrics import router as metrics_router
 from app.api.execution import router as execution_router
+from app.api.llm_employees import router as llm_employees_router
 from app.services.event_bus import get_event_bus
 from app.services.agent_runtime import get_agent_runtime
 
@@ -67,6 +68,7 @@ app.include_router(datasources_router)
 app.include_router(treasury_router)
 app.include_router(metrics_router)
 app.include_router(execution_router)
+app.include_router(llm_employees_router)
 
 
 @app.get("/")
