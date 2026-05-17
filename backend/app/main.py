@@ -14,6 +14,7 @@ from app.api.opportunities import router as opportunities_router
 from app.api.datasources import router as datasources_router
 from app.api.treasury import router as treasury_router
 from app.api.metrics import router as metrics_router
+from app.api.execution import router as execution_router
 from app.services.event_bus import get_event_bus
 from app.services.agent_runtime import get_agent_runtime
 
@@ -65,6 +66,7 @@ app.include_router(opportunities_router)
 app.include_router(datasources_router)
 app.include_router(treasury_router)
 app.include_router(metrics_router)
+app.include_router(execution_router)
 
 
 @app.get("/")

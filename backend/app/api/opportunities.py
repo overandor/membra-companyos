@@ -8,6 +8,8 @@ from app.services.simulation import SimulationService
 from app.services.risk_scoring import RiskScoringService
 from app.services.compliance_scoring import ComplianceScoringService
 from app.services.treasury import TreasuryService
+from app.services.policy_engine import get_policy_engine, ExecutionContext
+from app.services.approval_workflow import get_approval_workflow, ApprovalStage
 
 router = APIRouter(prefix="/api/v1/opportunities")
 
@@ -123,11 +125,29 @@ async def approve_opportunity(opportunity_id: str, approver_id: str, db: AsyncSe
         raise HTTPException(status_code=400, detail="Must complete compliance review before approval")
     if opp.compliance_score <= 0:
         raise HTTPException(status_code=400, detail="Compliance blocked this opportunity")
+
+    # Policy engine gate
+    policy = get_policy_engine()
+    ctx = ExecutionContext(
+        employee_id=approver_id,
+        department_id=opp.discovered_by_employee_id.split("-")[0] if opp.discovered_by_employee_id else "unknown",
+        action="approve_opportunity",
+        target=opportunity_id,
+        amount=opp.expected_profit,
+        chain=opp.chain,
+        risk_score=opp.risk_score,
+        compliance_score=opp.compliance_score,
+        simulation_passed=opp.simulation_status == "simulated",
+    )
+    result = policy.evaluate(ctx)
+    if result["result"] != "allow":
+        raise HTTPException(status_code=403, detail={"blocked_by_policy": result})
+
     opp.approval_status = ApprovalStatus.APPROVED.value
     opp.governance_review_json = {"approved_by": approver_id, "approved_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
     await db.commit()
     await db.refresh(opp)
-    return {"opportunity_id": opportunity_id, "status": "approved"}
+    return {"opportunity_id": opportunity_id, "status": "approved", "policy_check": result}
 
 
 @router.post("/{opportunity_id}/reject", tags=["opportunities"])
@@ -148,8 +168,54 @@ async def reject_opportunity(opportunity_id: str, reason: str, db: AsyncSession 
 
 @router.post("/{opportunity_id}/propose-execution", tags=["opportunities"])
 async def propose_execution(opportunity_id: str, proposer_id: str, db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    from app.models.opportunity import OnChainOpportunity
+    r = await db.execute(select(OnChainOpportunity).where(OnChainOpportunity.id == opportunity_id))
+    opp = r.scalar_one_or_none()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    if opp.approval_status != "approved":
+        raise HTTPException(status_code=400, detail="Opportunity must be approved before execution proposal")
+
+    # Create approval workflow request
+    wf = get_approval_workflow()
+    req = await wf.create_request(
+        request_id=f"req-{opportunity_id}",
+        opportunity_id=opportunity_id,
+        employee_id=proposer_id,
+        department_id=opp.discovered_by_employee_id.split("-")[0] if opp.discovered_by_employee_id else "unknown",
+        metadata={
+            "amount": opp.expected_profit,
+            "chain": opp.chain,
+            "risk_score": opp.risk_score,
+            "compliance_score": opp.compliance_score,
+            "simulation_passed": opp.simulation_status == "simulated",
+        },
+    )
+    # Auto-advance through stages that have deterministic checks
+    while req.current_stage not in {ApprovalStage.APPROVED, ApprovalStage.REJECTED, ApprovalStage.ESCALATED}:
+        # In a real system, each stage would require human/automated review
+        # For now, auto-approve if metadata supports it
+        can_advance = True
+        if req.current_stage == ApprovalStage.SIMULATION_REVIEW and not req.metadata.get("simulation_passed"):
+            can_advance = False
+        if req.current_stage == ApprovalStage.RISK_REVIEW and req.metadata.get("risk_score", 1.0) >= 0.85:
+            can_advance = False
+        if req.current_stage == ApprovalStage.COMPLIANCE_REVIEW and req.metadata.get("compliance_score", 0.0) < 0.70:
+            can_advance = False
+        if req.current_stage == ApprovalStage.TREASURY_REVIEW and req.metadata.get("amount", 0) > 50000:
+            can_advance = False
+        if not can_advance:
+            break
+        req = await wf.advance(req.request_id, "system", "approve", "auto-approved by policy")
+
     svc = TreasuryService(db)
     result = await svc.propose_execution(opportunity_id, proposer_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    result["approval_request"] = {
+        "request_id": req.request_id,
+        "current_stage": req.current_stage.value,
+        "signatures": req.signatures,
+    }
     return result

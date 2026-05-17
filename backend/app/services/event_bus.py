@@ -46,13 +46,16 @@ class EventBus:
 
     async def publish(self, event: MembraEvent) -> None:
         """Publish an event to the bus."""
-        if self._redis is None:
-            await self.connect()
-        payload = json.dumps(event.model_dump(mode="json"), default=str)
-        await self._redis.publish(event.event_type, payload)
-        # Also publish to a catch-all channel
-        await self._redis.publish("membra.events.all", payload)
-        logger.debug("event_published", event_type=event.event_type, source=event.source)
+        try:
+            if self._redis is None:
+                await self.connect()
+            payload = json.dumps(event.model_dump(mode="json"), default=str)
+            await self._redis.publish(event.event_type, payload)
+            # Also publish to a catch-all channel
+            await self._redis.publish("membra.events.all", payload)
+            logger.debug("event_published", event_type=event.event_type, source=event.source)
+        except Exception as e:
+            logger.warning("event_publish_failed", event_type=event.event_type, error=str(e))
 
     def subscribe(self, event_type: str, handler: Callable[[MembraEvent], Any]) -> None:
         """Subscribe to an event type."""
