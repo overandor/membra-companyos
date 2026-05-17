@@ -1,9 +1,12 @@
-"""MEMBRA CompanyOS — Full Employee Registry (60 Employees)."""
-from typing import List, Dict
-from app.config.employees_a import ALL_EMPLOYEES_A, EmployeeConfig
-from app.config.employees_b import ALL_EMPLOYEES_B
+"""MEMBRA CompanyOS — Full Employee Registry (60 Employees).
 
-ALL_EMPLOYEES: List[EmployeeConfig] = ALL_EMPLOYEES_A + ALL_EMPLOYEES_B
+Dynamically generated from shared schemas, department configs, and role templates.
+"""
+from typing import List, Dict
+from app.config.employee_schema import EmployeeConfig
+from app.config.employee_generator import generate_employees
+
+ALL_EMPLOYEES: List[EmployeeConfig] = generate_employees()
 EMPLOYEE_MAP: Dict[str, EmployeeConfig] = {e.employee_id: e for e in ALL_EMPLOYEES}
 
 
